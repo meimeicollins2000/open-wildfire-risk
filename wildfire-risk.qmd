@@ -52,6 +52,30 @@ DBI::dbDisconnect(con, shutdown = TRUE)
 # Build point sf from lon/lat columns
 buildings_sf <- sf::st_as_sf(df, coords = c("lon", "lat"), crs = 4326)
 
+# ── USDA burn probability from remote COG ───────────────────────────────────
+# Credentials from credentials.json (gitignored — never committed).
+# Key names match the Source Cooperative credentials JSON format.
+creds <- jsonlite::fromJSON("credentials.json")
+terra::setGDALconfig("AWS_ACCESS_KEY_ID",     creds$credentials$aws_access_key_id)
+terra::setGDALconfig("AWS_SECRET_ACCESS_KEY", creds$credentials$aws_secret_access_key)
+terra::setGDALconfig("AWS_SESSION_TOKEN",     creds$credentials$aws_session_token)
+terra::setGDALconfig("AWS_REGION",            creds$credentials$region_name)
+terra::setGDALconfig("AWS_VIRTUAL_HOSTING",   "FALSE")
+
+cog_path <- "/vsis3/us-west-2.opendata.source.coop/espm-288/espm-288-testing/BP_CA_cog.tif"
+cog <- terra::rast(cog_path)
+
+# terra::extract does not reproject automatically — match CRS first
+pts_vect <- terra::project(terra::vect(buildings_sf), terra::crs(cog))
+
+# extract() returns data frame: col 1 = row ID, col 2 = raster value
+usda_vals <- terra::extract(cog, pts_vect)
+buildings_sf$usda_bp <- usda_vals[[2]]
+
+# Append so stats, dropdown, and popup all pick it up automatically
+target_cols <- c(target_cols, "usda_bp")
+# ────────────────────────────────────────────────────────────────────────────
+
 # Compute per-column min/max for the JS color scale
 buildings_pts <- buildings_sf
 stats_df <- buildings_pts |>

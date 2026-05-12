@@ -3,10 +3,10 @@ title: "LA County Wildfire Risk"
 format:
   html:
     embed-resources: true
-    code-fold: true
 ---
 
 ```{r}
+#| echo: false
 #| message: false
 #| warning: false
 
@@ -72,8 +72,11 @@ pts_vect <- terra::project(terra::vect(buildings_sf), terra::crs(cog))
 usda_vals <- terra::extract(cog, pts_vect)
 buildings_sf$usda_bp <- usda_vals[[2]]
 
-# Append so stats, dropdown, and popup all pick it up automatically
-target_cols <- c(target_cols, "usda_bp")
+# Compute composite risk score: USDA burn probability × CarbonPlan conditional RPS
+buildings_sf$rps_usda <- buildings_sf$usda_bp * buildings_sf$crps_scott
+
+# Put rps_usda first so it's the default display; usda_bp last
+target_cols <- c("rps_usda", target_cols, "usda_bp")
 # ────────────────────────────────────────────────────────────────────────────
 
 # Compute per-column min/max for the JS color scale
@@ -95,14 +98,15 @@ col_stats <- setNames(
 col_stats_json <- toJSON(col_stats, auto_unbox = TRUE)
 cols_json      <- toJSON(target_cols)
 
-# Initial color scale for the first column
-first_col <- target_cols[1]
-first_min <- col_stats[[first_col]]$min
-first_max <- col_stats[[first_col]]$max
-first_mid <- (first_min + first_max) / 2
+# Custom 10-stop white→red scale for rps_usda (breaks as decimal fractions of %)
+rps_usda_breaks <- c(0, 0.0001, 0.0002, 0.00035, 0.0006, 0.001, 0.002, 0.005, 0.01, 0.03)
+rps_usda_colors <- c("#fff0f0", "#ffd6d6", "#ffadad", "#ff8585", "#ff5c5c",
+                     "#ff3333", "#e60000", "#cc0000", "#990000", "#660000")
+rps_usda_breaks_json <- toJSON(rps_usda_breaks)
+rps_usda_colors_json <- toJSON(rps_usda_colors)
 
 m <- maplibre(
-  style  = carto_style("positron"),
+  style  = carto_style("dark-matter"),
   center = c(-118.25, 34.05),
   zoom   = 9
 ) |>
@@ -110,35 +114,36 @@ m <- maplibre(
     id     = "buildings",
     source = buildings_pts,
     circle_color = interpolate(
-      column = first_col,
-      values = c(first_min, first_mid, first_max),
-      stops  = c("#1a9850", "#ffffbf", "#d73027")
+      column = "rps_usda",
+      values = rps_usda_breaks,
+      stops  = rps_usda_colors
     ),
     circle_radius       = 3,
     circle_opacity      = 0.7,
     circle_stroke_width = 0
   )
 
-# Inject a dropdown that re-colors points on change via setPaintProperty
 js_code <- sprintf('
 function(el, x) {
   var map = this.getMap();
-  var cols  = %s;
-  var stats = %s;
+  var cols          = %s;
+  var stats         = %s;
+  var rpsUsdaBreaks = %s;
+  var rpsUsdaColors = %s;
 
   var wrapper = document.createElement("div");
   wrapper.style.cssText = [
     "position:absolute", "top:10px", "left:50px", "z-index:1000",
-    "background:white", "padding:8px 12px", "border-radius:4px",
-    "box-shadow:0 1px 4px rgba(0,0,0,0.3)", "font-family:sans-serif",
-    "font-size:13px"
+    "background:rgba(30,30,30,0.85)", "padding:8px 12px", "border-radius:4px",
+    "box-shadow:0 1px 4px rgba(0,0,0,0.5)", "font-family:sans-serif",
+    "font-size:13px", "color:#fff"
   ].join(";");
 
   var label = document.createElement("label");
   label.textContent = "Risk metric: ";
 
   var select = document.createElement("select");
-  select.style.marginLeft = "6px";
+  select.style.cssText = "margin-left:6px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px 4px";
   cols.forEach(function(col) {
     var opt = document.createElement("option");
     opt.value = col;
@@ -147,14 +152,24 @@ function(el, x) {
   });
 
   function updateLayer(col) {
-    var s = stats[col];
-    var mid = (s.min + s.max) / 2;
-    map.setPaintProperty("buildings", "circle-color", [
-      "interpolate", ["linear"], ["get", col],
-      s.min, "#1a9850",
-      mid,   "#ffffbf",
-      s.max, "#d73027"
-    ]);
+    var paintExpr;
+    if (col.startsWith("rps_")) {
+      var stops = ["interpolate", ["linear"], ["get", col]];
+      for (var i = 0; i < rpsUsdaBreaks.length; i++) {
+        stops.push(rpsUsdaBreaks[i]);
+        stops.push(rpsUsdaColors[i]);
+      }
+      paintExpr = stops;
+    } else {
+      var s = stats[col];
+      var mid = (s.min + s.max) / 2;
+      paintExpr = ["interpolate", ["linear"], ["get", col],
+        s.min, "#1a9850",
+        mid,   "#ffffbf",
+        s.max, "#d73027"
+      ];
+    }
+    map.setPaintProperty("buildings", "circle-color", paintExpr);
   }
 
   select.addEventListener("change", function() { updateLayer(select.value); });
@@ -170,7 +185,7 @@ function(el, x) {
 
     var rows = cols.map(function(col) {
       var val = props[col];
-      var display = (val !== null && val !== undefined) ? parseFloat(val).toFixed(4) : "N/A";
+      var display = (val !== null && val !== undefined) ? parseFloat(val).toFixed(6) : "N/A";
       return "<tr>" +
         "<td style=\\"padding:2px 10px 2px 0;font-weight:bold;white-space:nowrap\\">" + col + "</td>" +
         "<td style=\\"padding:2px 0;text-align:right\\">" + display + "</td>" +
@@ -193,8 +208,23 @@ function(el, x) {
     map.getCanvas().style.cursor = "";
   });
 }
-', cols_json, col_stats_json)
+', cols_json, col_stats_json, rps_usda_breaks_json, rps_usda_colors_json)
 
 final_map <- m |> onRender(js_code)
 final_map
 ```
+
+---
+
+## About This Map
+
+Each dot represents a sampled LA County building, colored by its **Risk to Potential Structures (RPS)** — the annualized expected loss from wildfire. This map compares RPS values produced by different burn probability methodologies: even though the underlying building stock is identical, the three independent fire behavior modeling approaches yield meaningfully different risk scores, revealing how much methodology choice shapes community-level risk estimates.
+
+| Field(s) | Source | Methodology (2 sentences) |
+|:---|:---|:---|
+| `rps_scott`, `crps_scott` | **Scott et al. 2024** — USDA Forest Service Rocky Mountain Research Station & Pyrologix LLC | Used the FSim geospatial fire simulator with LANDFIRE 2020 fuel data at 270 m to model burn probability, then ran FlamMap across the full seasonal weather spectrum at 30 m resolution to model fire intensity. These inputs were combined to produce conditional risk to potential structures (cRPS) for every land parcel in the contiguous U.S. |
+| `rps_riley`, `bp_scott_riley`, `bp_2047_riley` | **Riley et al. 2025** — USDA Forest Service | Generated annual burn probability rasters at 270 m resolution for both present-day (~2011) and projected mid-century (~2047) climate conditions using large-ensemble fire simulations. Applying these probabilities to structure exposure values yields RPS estimates that can be compared directly to Scott et al. under current and future climate scenarios. |
+| `usda_bp` | **USDA Wildfire Risk to Communities** — Dillon et al. 2024, USDA Forest Service | Produced a nationally consistent burn probability layer at 270 m using FSim with LANDFIRE 2020 fuels, then upsampled to 30 m to align with structure-level assessments. This layer is designed for standardized cross-regional comparison of wildfire likelihood across all U.S. lands. |
+| `rps_usda` | **Composite (this analysis)** | Multiplies the USDA burn probability (`usda_bp`) by CarbonPlan's conditional risk score (`crps_scott`), combining a nationally standardized ignition likelihood with a structure-level conditional exposure metric. This field is not a published product — it illustrates how substituting a different burn probability source into the same RPS framework shifts the resulting risk rankings. |
+
+**CarbonPlan Open California Risk (OCR)** is the platform that spatially joined all datasets above to individual building footprints from Overture Maps Foundation, enabling per-building comparisons across fire risk methodologies at scale.

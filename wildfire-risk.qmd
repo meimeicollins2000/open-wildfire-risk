@@ -228,3 +228,18 @@ Each dot represents a sampled LA County building, colored by its **Risk to Poten
 | `rps_usda` | **Composite (this analysis)** | Multiplies the USDA burn probability (`usda_bp`) by CarbonPlan's conditional risk score (`crps_scott`), combining a nationally standardized ignition likelihood with a structure-level conditional exposure metric. This field is not a published product — it illustrates how substituting a different burn probability source into the same RPS framework shifts the resulting risk rankings. |
 
 **CarbonPlan Open California Risk (OCR)** is the platform that spatially joined all datasets above to individual building footprints from Overture Maps Foundation, enabling per-building comparisons across fire risk methodologies at scale.
+
+---
+
+## Data Links
+
+- [CarbonPlan Open California Risk (OCR)](https://carbonplan.org/research/open-california-risk) — buildings parquet dataset with per-structure RPS values
+- [CarbonPlan OCR Data Source Documentation](https://docs.carbonplan.org/ocr/en/latest/reference/data-sources.html)
+- [Scott et al. 2024 — Wildfire Risk to Communities](https://www.fs.usda.gov/rds/archive/catalog/RDS-2020-0016-2) (USDA Forest Service; source of `rps_scott`, `crps_scott`)
+- [Riley et al. 2025 — Burn Probability under Current and Future Climate](https://doi.org/10.2737/RDS-2020-0016-2) (USDA Forest Service; source of `rps_riley`, `bp_*_riley`)
+- [USDA Wildfire Risk to Communities — Burn Probability Layer](https://source.coop/espm-288/espm-288-testing) (`usda_bp`; hosted on Source Cooperative)
+- [Overture Maps Foundation Buildings](https://overturemaps.org/) — building footprint geometry
+
+---
+
+*Coding assistance provided by [Claude](https://claude.ai) (Anthropic). Map built with [mapgl](https://walker-data.com/mapgl/) and [Quarto](https://quarto.org/).*

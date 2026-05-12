@@ -233,11 +233,10 @@ Each dot represents a sampled LA County building, colored by its **Risk to Poten
 
 ## Data Links
 
-- [CarbonPlan Open California Risk (OCR)](https://carbonplan.org/research/open-california-risk) — buildings parquet dataset with per-structure RPS values
 - [CarbonPlan OCR Data Source Documentation](https://docs.carbonplan.org/ocr/en/latest/reference/data-sources.html)
 - [Scott et al. 2024 — Wildfire Risk to Communities](https://www.fs.usda.gov/rds/archive/catalog/RDS-2020-0016-2) (USDA Forest Service; source of `rps_scott`, `crps_scott`)
-- [Riley et al. 2025 — Burn Probability under Current and Future Climate](https://doi.org/10.2737/RDS-2020-0016-2) (USDA Forest Service; source of `rps_riley`, `bp_*_riley`)
-- [USDA Wildfire Risk to Communities — Burn Probability Layer](https://source.coop/espm-288/espm-288-testing) (`usda_bp`; hosted on Source Cooperative)
+- [Riley et al. 2025 — Burn Probability under Current and Future Climate](https://www.fs.usda.gov/rds/archive/catalog/RDS-2025-0006) (USDA Forest Service; source of `rps_riley`, `bp_*_riley`)
+- [USDA Wildfire Risk to Communities — Burn Probability Layer](https://source.coop/espm-288/espm-288-testing) (`usda_bp`; processed from Scott et al. 2024 into a Cloud-Optimized GeoTIFF and posted to Source Cooperative by Mei Collins for the ESPM-288 class)
 - [Overture Maps Foundation Buildings](https://overturemaps.org/) — building footprint geometry
 
 ---

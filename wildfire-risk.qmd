@@ -1,0 +1,146 @@
+---
+title: "LA County Wildfire Risk"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(duckdb)
+library(sf)
+library(dplyr)
+library(jsonlite)
+library(mapgl)
+library(htmlwidgets)
+
+urls <- paste0(
+  "https://data.source.coop/carbonplan/carbonplan-ocr/output/fire-risk/",
+  "vector/production/v1.1.0/geoparquet/buildings.parquet/",
+  "state_fips=06/county_fips=037/data_", 0:12, ".parquet"
+)
+
+urls_sql <- paste0("[", paste0("'", urls, "'", collapse = ", "), "]")
+
+con <- duckdb::dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+DBI::dbExecute(con, "INSTALL httpfs; LOAD httpfs;")
+DBI::dbExecute(con, "INSTALL spatial; LOAD spatial;")
+
+# Discover column names from schema
+schema_df   <- DBI::dbGetQuery(con, sprintf("DESCRIBE SELECT * FROM read_parquet(%s)", urls_sql))
+all_cols    <- schema_df$column_name
+start_idx   <- which(all_cols == "rps_scott")
+end_idx     <- which(all_cols == "bp_2047_riley")
+target_cols <- all_cols[start_idx:end_idx]
+
+# Read centroid lon/lat + risk columns — sample 100k rows to keep HTML size manageable
+attr_sql <- paste(target_cols, collapse = ", ")
+df <- DBI::dbGetQuery(con, sprintf(
+  "SELECT ST_X(ST_Centroid(geometry)) AS lon,
+          ST_Y(ST_Centroid(geometry)) AS lat,
+          %s
+   FROM read_parquet(%s)
+   USING SAMPLE 100000 ROWS",
+  attr_sql, urls_sql
+))
+
+DBI::dbDisconnect(con, shutdown = TRUE)
+
+# Build point sf from lon/lat columns
+buildings_sf <- sf::st_as_sf(df, coords = c("lon", "lat"), crs = 4326)
+
+# Compute per-column min/max for the JS color scale
+buildings_pts <- buildings_sf
+stats_df <- buildings_pts |>
+  st_drop_geometry() |>
+  summarise(across(all_of(target_cols), list(
+    min = ~min(., na.rm = TRUE),
+    max = ~max(., na.rm = TRUE)
+  )))
+
+col_stats <- setNames(
+  lapply(target_cols, function(col) list(
+    min = stats_df[[paste0(col, "_min")]],
+    max = stats_df[[paste0(col, "_max")]]
+  )),
+  target_cols
+)
+col_stats_json <- toJSON(col_stats, auto_unbox = TRUE)
+cols_json      <- toJSON(target_cols)
+
+# Initial color scale for the first column
+first_col <- target_cols[1]
+first_min <- col_stats[[first_col]]$min
+first_max <- col_stats[[first_col]]$max
+first_mid <- (first_min + first_max) / 2
+
+m <- maplibre(
+  style  = carto_style("positron"),
+  center = c(-118.25, 34.05),
+  zoom   = 9
+) |>
+  add_circle_layer(
+    id     = "buildings",
+    source = buildings_pts,
+    circle_color = interpolate(
+      column = first_col,
+      values = c(first_min, first_mid, first_max),
+      stops  = c("#1a9850", "#ffffbf", "#d73027")
+    ),
+    circle_radius       = 3,
+    circle_opacity      = 0.7,
+    circle_stroke_width = 0
+  )
+
+# Inject a dropdown that re-colors points on change via setPaintProperty
+js_code <- sprintf('
+function(el, x) {
+  var map = this.getMap();
+  var cols  = %s;
+  var stats = %s;
+
+  var wrapper = document.createElement("div");
+  wrapper.style.cssText = [
+    "position:absolute", "top:10px", "left:50px", "z-index:1000",
+    "background:white", "padding:8px 12px", "border-radius:4px",
+    "box-shadow:0 1px 4px rgba(0,0,0,0.3)", "font-family:sans-serif",
+    "font-size:13px"
+  ].join(";");
+
+  var label = document.createElement("label");
+  label.textContent = "Risk metric: ";
+
+  var select = document.createElement("select");
+  select.style.marginLeft = "6px";
+  cols.forEach(function(col) {
+    var opt = document.createElement("option");
+    opt.value = col;
+    opt.textContent = col;
+    select.appendChild(opt);
+  });
+
+  function updateLayer(col) {
+    var s = stats[col];
+    var mid = (s.min + s.max) / 2;
+    map.setPaintProperty("buildings", "circle-color", [
+      "interpolate", ["linear"], ["get", col],
+      s.min, "#1a9850",
+      mid,   "#ffffbf",
+      s.max, "#d73027"
+    ]);
+  }
+
+  select.addEventListener("change", function() { updateLayer(select.value); });
+
+  wrapper.appendChild(label);
+  wrapper.appendChild(select);
+  el.appendChild(wrapper);
+}
+', cols_json, col_stats_json)
+
+final_map <- m |> onRender(js_code)
+final_map
+```
